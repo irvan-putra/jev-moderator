@@ -50,7 +50,7 @@ public class MainActivity extends AppCompatActivity {
     private final List<String> log = new ArrayList<>();
     private ProcessCameraProvider provider;
     private final List<JevClient.Round> rounds = new ArrayList<>();
-    private CheckBox cbSendJev; private CheckBox cbJev; private EditText etKey; private TextView tvJev, tvPhoto, tvCompare; private KeyVault vault;
+    private CheckBox cbSendJev; private CheckBox cbJev; private TextView tvJev, tvPhoto, tvCompare; private KeyVault vault;
 
     private int dp(int v) { return Math.round(v * getResources().getDisplayMetrics().density); }
     private TextView label(String t, int sp, boolean bold) {
@@ -147,11 +147,8 @@ public class MainActivity extends AppCompatActivity {
         root.addView(label("Off by default. When switched on, after each round ONLY the question text and the hand/people counts are sent to TypeSafe's Jev model (api.typesafe.ai). No pictures are sent by this option. You need your own TypeSafe API key. Everything else works without it.", 12, false));
         vault = new KeyVault(this);
         cbJev = new CheckBox(this); cbJev.setText("Send round numbers to Jev for an insight"); root.addView(cbJev); cbJev.setOnCheckedChangeListener((c, on) -> updateModels());
-        etKey = new EditText(this); etKey.setHint(vault.has() ? "API key saved (hidden). Paste a new one to replace." : "Paste your TypeSafe API key");
-        etKey.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD); etKey.setSingleLine(); root.addView(etKey);
         LinearLayout jr = row();
-        jr.addView(btn("Save key", 0xFF73A89A, v -> saveKey()));
-        jr.addView(btn("Forget key", 0xFFFFFFFF, v -> { vault.clear(); etKey.setText(""); etKey.setHint("Paste your TypeSafe API key"); cbJev.setChecked(false); tvJev.setText("Key removed."); }));
+        jr.addView(btn("Key settings (opens a private box)", 0xFF73A89A, v -> keyDialog()));
         jr.addView(btn("Send a test", 0xFFFFFFFF, v -> sendTest()));
         root.addView(jr);
         tvJev = label("Jev is off.", 13, false); root.addView(tvJev);
@@ -393,10 +390,20 @@ public class MainActivity extends AppCompatActivity {
         roundUntil = System.currentTimeMillis() + secs[spDur.getSelectedItemPosition()] * 1000L;
         btnRound.setEnabled(false);
     }
-    private void saveKey() {
-        String k = etKey.getText().toString().trim();
-        if (k.isEmpty()) { tvJev.setText("Paste a key first."); return; }
-        try { vault.save(k); etKey.setText(""); etKey.setHint("API key saved (hidden). Paste a new one to replace."); tvJev.setText("Key saved on this phone (encrypted). Tick the box to use it."); updateModels(); }
+    /** The key box exists only inside this dialog, never on the main screen, and stays masked. */
+    private void keyDialog() {
+        final EditText ek = new EditText(this);
+        ek.setHint(vault.has() ? "A key is saved (hidden). Paste a new one to replace." : "Paste your TypeSafe API key");
+        ek.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD); ek.setSingleLine();
+        LinearLayout box = new LinearLayout(this); box.setPadding(dp(20), dp(8), dp(20), dp(8)); box.addView(ek, new LinearLayout.LayoutParams(-1, -2));
+        new androidx.appcompat.app.AlertDialog.Builder(this).setTitle("TypeSafe API key (stored encrypted on this phone)").setView(box)
+            .setPositiveButton("Save", (d, w) -> saveKey(ek.getText().toString().trim()))
+            .setNeutralButton("Forget key", (d, w) -> { vault.clear(); cbJev.setChecked(false); tvJev.setText("Key removed."); updateModels(); })
+            .setNegativeButton("Cancel", null).show();
+    }
+    private void saveKey(String k) {
+        if (k.isEmpty()) { tvJev.setText("No key entered. Nothing saved."); return; }
+        try { vault.save(k); tvJev.setText("Key saved on this phone (encrypted). Tick the box to use it."); updateModels(); }
         catch (Throwable t) { tvJev.setText("Could not store the key safely: " + t.getMessage()); }
     }
     private void insight(String q, int h, int p, boolean manual, boolean isTest) {
