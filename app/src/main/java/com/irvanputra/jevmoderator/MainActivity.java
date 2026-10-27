@@ -29,7 +29,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public class MainActivity extends AppCompatActivity {
-    private static final int REQ_CAM = 7;
+    private static final int REQ_CAM = 7, REQ_PICK = 8;
     private final SecureRandom rng = new SecureRandom();
     private final Handler ui = new Handler(Looper.getMainLooper());
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
@@ -49,7 +49,7 @@ public class MainActivity extends AppCompatActivity {
     private final List<String> log = new ArrayList<>();
     private ProcessCameraProvider provider;
     private final List<JevClient.Round> rounds = new ArrayList<>();
-    private CheckBox cbJev; private EditText etKey; private TextView tvJev; private KeyVault vault;
+    private CheckBox cbJev; private EditText etKey; private TextView tvJev, tvPhoto; private KeyVault vault;
 
     private int dp(int v) { return Math.round(v * getResources().getDisplayMetrics().density); }
     private TextView label(String t, int sp, boolean bold) {
@@ -91,7 +91,7 @@ public class MainActivity extends AppCompatActivity {
             ct.setBackgroundColor(0xFFFBE9E9); ct.setPadding(dp(8), dp(8), dp(8), dp(8)); root.addView(ct);
             root.addView(btn("Hide this message", 0xFFFFFFFF, v -> { cp.edit().remove("last").apply(); ct.setVisibility(View.GONE); v.setVisibility(View.GONE); }));
         }
-        TextView sub = label("Counts people the camera sees, counts raised hands per question, and picks a random person. Camera pictures are processed on this phone only: no uploads, no recording, no names, no face recognition. The optional Jev round insight (off by default) would send question text and counts, never pictures.", 12, false);
+        TextView sub = label("Counts people the camera sees, counts raised hands per question, and picks a random person. Camera pictures are processed on this phone only: no uploads, no recording, no names, no face recognition. The optional Jev round insight (off by default) sends question text and counts only. The separate photo question sends a picture only when you pick it, preview it and tap Send.", 12, false);
         root.addView(sub);
 
         LinearLayout m = row(); tvPeople = metric(m, "people counted"); tvHands = metric(m, "hands up now"); tvPeak = metric(m, "most hands at once (this round)");
@@ -135,7 +135,7 @@ public class MainActivity extends AppCompatActivity {
         tvLog = label("(no rounds yet)", 14, false); root.addView(tvLog);
 
         root.addView(label("Round insight (optional, uses Jev online)", 15, true));
-        root.addView(label("Off by default. When switched on, after each round ONLY the question text and the hand/people counts are sent to TypeSafe's Jev model (api.typesafe.ai). Camera pictures never leave the phone. You need your own TypeSafe API key. Everything else works without it.", 12, false));
+        root.addView(label("Off by default. When switched on, after each round ONLY the question text and the hand/people counts are sent to TypeSafe's Jev model (api.typesafe.ai). No pictures are sent by this option. You need your own TypeSafe API key. Everything else works without it.", 12, false));
         vault = new KeyVault(this);
         cbJev = new CheckBox(this); cbJev.setText("Send round numbers to Jev for an insight"); root.addView(cbJev); cbJev.setOnCheckedChangeListener((c, on) -> updateModels());
         etKey = new EditText(this); etKey.setHint(vault.has() ? "API key saved (hidden). Paste a new one to replace." : "Paste your TypeSafe API key");
@@ -146,6 +146,14 @@ public class MainActivity extends AppCompatActivity {
         jr.addView(btn("Send a test", 0xFFFFFFFF, v -> sendTest()));
         root.addView(jr);
         tvJev = label("Jev is off.", 13, false); root.addView(tvJev);
+
+        root.addView(label("Photo question to Jev (experimental, you choose each photo)", 15, true));
+        root.addView(label("Jev's image feature is marked experimental by TypeSafe. Nothing is sent unless you tap one of these buttons, check the photo in the preview and tap Send. Only that one photo goes to TypeSafe (api.typesafe.ai). It may show people's faces. It asks whether hands are raised and never identifies anyone. The answer is a second opinion and never changes the counts. Needs your key above.", 12, false));
+        LinearLayout phr = row();
+        phr.addView(btn("Pick a photo", 0xFFFFFFFF, v -> pickPhoto()));
+        phr.addView(btn("Use current camera frame", 0xFFFFFFFF, v -> frameToJev()));
+        root.addView(phr);
+        tvPhoto = label("No photo sent.", 13, false); root.addView(tvPhoto);
 
         root.addView(label("Random audience pick", 15, true));
         root.addView(label("Choose the pool each time. The picture freezes on the picked person (yellow box). It cannot know names.", 12, false));
@@ -194,7 +202,75 @@ public class MainActivity extends AppCompatActivity {
         tvModels.setText(
             "1. People and hands (on this phone, no internet): YOLOv8n-pose by Ultralytics (AGPL-3.0), ONNX export from Hugging Face Xenova/yolov8n-pose, file yolov8n-pose.onnx, " + size + ", 640x640 input, run by ONNX Runtime " + ort + " on the CPU. Status: " + (counter != null ? "loaded" : "not loaded yet (loads when you start the camera)") + ". It finds body boxes and 17 body points per person; a hand counts as raised when the wrist is above the nose or shoulders. It does not know who anyone is.\n"
           + "2. Round insight (online, optional): Jev (model jev-latest) by TypeSafe through api.typesafe.ai. Status: " + (jevOn ? "switched on" : "off") + (vault != null && vault.has() ? ", key saved" : ", no key saved") + ". Sends text and numbers only. Not yet tried against the live service by the author.\n"
+          + "3. Photo question (online, optional, experimental): the same Jev model through api.typesafe.ai with TypeSafe's experimental images flag. Sends one photo only after you pick it, preview it and tap Send. Not yet tried against the live service by the author.\n"
           + "Random pick is a plain random choice among the detected boxes, not a model.");
+    }
+
+    // ---- optional photo question to Jev: only after the user picks a photo, sees it, and taps Send ----
+    private void pickPhoto() {
+        if (!vault.has()) { tvPhoto.setText("Save a TypeSafe key first. Nothing was sent."); return; }
+        android.content.Intent i = new android.content.Intent(android.content.Intent.ACTION_GET_CONTENT);
+        i.setType("image/*"); i.addCategory(android.content.Intent.CATEGORY_OPENABLE);
+        startActivityForResult(android.content.Intent.createChooser(i, "Pick a photo for Jev"), REQ_PICK);
+    }
+    @Override protected void onActivityResult(int req, int res, android.content.Intent data) {
+        super.onActivityResult(req, res, data);
+        if (req != REQ_PICK || res != RESULT_OK || data == null || data.getData() == null) return;
+        final android.net.Uri uri = data.getData();
+        worker.execute(() -> {
+            try {
+                Bitmap b = loadPicked(uri);
+                if (b == null) { ui.post(() -> tvPhoto.setText("Could not read that photo. Nothing was sent.")); return; }
+                final Bitmap fb = b; ui.post(() -> confirmSend(fb));
+            } catch (Throwable t) { ui.post(() -> tvPhoto.setText("Could not read that photo. Nothing was sent.")); }
+        });
+    }
+    private Bitmap loadPicked(android.net.Uri uri) throws Exception {
+        android.graphics.BitmapFactory.Options o = new android.graphics.BitmapFactory.Options(); o.inJustDecodeBounds = true;
+        try (java.io.InputStream in = getContentResolver().openInputStream(uri)) { android.graphics.BitmapFactory.decodeStream(in, null, o); }
+        int sample = 1; while (Math.max(o.outWidth, o.outHeight) / (sample * 2) >= 1568) sample *= 2;
+        android.graphics.BitmapFactory.Options o2 = new android.graphics.BitmapFactory.Options(); o2.inSampleSize = sample;
+        Bitmap b; try (java.io.InputStream in = getContentResolver().openInputStream(uri)) { b = android.graphics.BitmapFactory.decodeStream(in, null, o2); }
+        if (b == null) return null;
+        int rot = 0;
+        try (java.io.InputStream in = getContentResolver().openInputStream(uri)) {
+            int ori = new android.media.ExifInterface(in).getAttributeInt(android.media.ExifInterface.TAG_ORIENTATION, 1);
+            if (ori == 6) rot = 90; else if (ori == 3) rot = 180; else if (ori == 8) rot = 270;
+        } catch (Throwable ignored) { }
+        if (rot != 0) { Matrix mx = new Matrix(); mx.postRotate(rot); b = Bitmap.createBitmap(b, 0, 0, b.getWidth(), b.getHeight(), mx, true); }
+        return b;
+    }
+    private void frameToJev() {
+        if (!vault.has()) { tvPhoto.setText("Save a TypeSafe key first. Nothing was sent."); return; }
+        Bitmap f = lastFrame;
+        if (f == null) { tvPhoto.setText("Start the camera first. Nothing was sent."); return; }
+        confirmSend(f.copy(Bitmap.Config.ARGB_8888, false));
+    }
+    private void confirmSend(final Bitmap src) {
+        final int[] t = JevImage.targetSize(src.getWidth(), src.getHeight());
+        if (t == null) { tvPhoto.setText("That photo's shape is outside Jev's image limits. Nothing was sent."); return; }
+        final Bitmap out = (t[0] == src.getWidth() && t[1] == src.getHeight()) ? src : Bitmap.createScaledBitmap(src, t[0], t[1], true);
+        ImageView iv = new ImageView(this); iv.setImageBitmap(out); iv.setAdjustViewBounds(true); iv.setPadding(dp(8), dp(8), dp(8), dp(8));
+        new androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Send this photo to TypeSafe's Jev?")
+            .setMessage("Only this one photo is sent (" + t[0] + "x" + t[1] + "). It may show people's faces. Jev is asked whether hands are raised and is told not to identify anyone. Image support is experimental.")
+            .setView(iv)
+            .setPositiveButton("Send", (d, w) -> sendPhoto(out))
+            .setNegativeButton("Cancel", (d, w) -> tvPhoto.setText("Cancelled. Nothing was sent."))
+            .setOnCancelListener(d -> tvPhoto.setText("Cancelled. Nothing was sent."))
+            .show();
+    }
+    private void sendPhoto(final Bitmap out) {
+        tvPhoto.setText("Sending the photo you confirmed to Jev...");
+        new Thread(() -> {
+            String res;
+            try {
+                java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream();
+                out.compress(Bitmap.CompressFormat.JPEG, 88, bo);
+                res = JevImage.ask(vault.load(), bo.toByteArray());
+            } catch (Throwable e) { res = "Jev unavailable: " + e.getMessage(); }
+            final String r = res; runOnUiThread(() -> tvPhoto.setText(r));
+        }).start();
     }
 
     // ---- camera ----

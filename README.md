@@ -9,7 +9,7 @@ Features
 - Random audience pick: separate buttons for "everyone seen" and "raised hands". The frame freezes with a yellow box on the picked person.
 - Manual +/- fallback and a no-camera random number picker.
 
-Privacy: counting, hands and the random pick run on the phone. Camera pictures are never saved or sent, and there is no face recognition or identity matching (boxes and positions only, never names). The app has the INTERNET permission only for the optional, off-by-default Round insight: when you switch it on and save your own TypeSafe API key, each round sends only the question text and the hand/people counts to TypeSafe's Jev model at https://api.typesafe.ai/v1/systemone. The key is stored encrypted with an Android Keystore key, is not in this repository and is never logged.
+Privacy: counting, hands and the random pick run on the phone. Camera pictures are never saved, and are sent only if you use the optional Photo question (see below), and there is no face recognition or identity matching (boxes and positions only, never names). The app has the INTERNET permission only for the optional, off-by-default Round insight: when you switch it on and save your own TypeSafe API key, each round sends only the question text and the hand/people counts to TypeSafe's Jev model at https://api.typesafe.ai/v1/systemone. The key is stored encrypted with an Android Keystore key, is not in this repository and is never logged.
 
 Limits: people who are hidden, tiny, far away or in the dark are missed; a packed room will undercount. Wide-room scan splits the picture into tiles to see farther people but updates more slowly.
 
@@ -29,3 +29,5 @@ An empty furnished room was counted as 5 people on a Galaxy A24 (v0.3). v0.4 add
 v0.4 crashed whenever Start camera was tapped: the "Models used" panel was missing from the screen code while the camera start still tried to update it (a null field). v0.4.1 adds the panel for real, guards the update, and keeps a local-only crash note (class names and code lines, no messages) that is shown on the next launch. Not yet tested on a phone.
 
 Icon: the launcher icon is a sticker image supplied by the app owner; its original source and license are not known to the author.
+
+Photo question (v0.5.0, optional, experimental): TypeSafe marks Jev's image input as experimental (header TypeSafe-Danger-Zone-Images, docs.typesafe.ai/go/images). The app sends one photo only after you pick it (or choose the current camera frame), see it in a preview and tap Send. It asks whether hands are raised and never to identify anyone, and shows the answer as a second opinion that never changes the counts. It needs your own TypeSafe key and credits. Tested only against a local mock server, not the live service and not on a phone.
