@@ -35,31 +35,34 @@ final class JevImage {
         return buildRequest(ref, asset);
     }
 
+    static final int MAX_N = 30;
+
+    private static JSONObject countQuestion(String text) throws Exception {
+        JSONObject q = new JSONObject(); q.put("type", "choice"); q.put("instructions", text);
+        JSONObject crit = new JSONObject();
+        for (int i = 0; i <= MAX_N; i++) crit.put("n" + i, i == 1 ? "Exactly 1" : "Exactly " + i);
+        crit.put("n" + (MAX_N + 1) + "_plus", "More than " + MAX_N);
+        crit.put("unclear", "Too dark, blurry or crowded to count");
+        q.put("criteria", crit); return q;
+    }
+
     static JSONObject buildRequest(String ref, JSONObject asset) throws Exception {
         JSONObject assets = new JSONObject(); assets.put(ref, asset);
         JSONObject state = new JSONObject(); state.put("photo", ref);
-        JSONObject any = new JSONObject();
-        any.put("type", "noul");
-        any.put("instructions", "Is at least one person in `photo` clearly raising a hand above their shoulder or head? Do not try to identify anyone.");
-        JSONObject cnt = new JSONObject();
-        cnt.put("type", "choice");
-        cnt.put("instructions", "How many people in `photo` have a hand clearly raised above their shoulder or head? Count only clearly visible raised hands.");
-        JSONObject crit = new JSONObject();
-        crit.put("none", "No raised hand is clearly visible");
-        crit.put("one", "Exactly one raised hand");
-        crit.put("two_to_four", "Two to four raised hands");
-        crit.put("five_or_more", "Five or more raised hands");
-        crit.put("unclear", "The photo is too dark, blurry or crowded to tell");
-        cnt.put("criteria", crit);
-        JSONObject qs = new JSONObject(); qs.put("any_hand_raised", any); qs.put("raised_hand_count", cnt);
+        JSONObject qs = new JSONObject();
+        qs.put("people_count", countQuestion("How many separate people are clearly visible in `photo`? Count each person once, including partly visible ones. Do not try to identify anyone."));
+        qs.put("raised_hand_count", countQuestion("How many people in `photo` have a hand clearly raised above their shoulder or head? Count people, not hands. Do not try to identify anyone."));
         JSONObject body = new JSONObject();
         body.put("model", "jev-latest"); body.put("state", state); body.put("assets", assets); body.put("questions", qs);
         return body;
     }
 
-    static String ask(String apiKey, byte[] jpeg) throws Exception { return ask(JevClient.URL, apiKey, buildRequest(jpeg)); }
+    /** Jev's estimate. people/hands = -1 when Jev said unclear; MAX_N+1 means "more than MAX_N". */
+    static final class Result { int people, hands; double pPeople, pHands; }
 
-    static String ask(String endpoint, String apiKey, JSONObject body) throws Exception {
+    static Result ask(String apiKey, byte[] jpeg) throws Exception { return ask(JevClient.URL, apiKey, buildRequest(jpeg)); }
+
+    static Result ask(String endpoint, String apiKey, JSONObject body) throws Exception {
         byte[] payload = body.toString().getBytes(StandardCharsets.UTF_8);
         HttpURLConnection c = (HttpURLConnection) new java.net.URL(endpoint).openConnection();
         c.setConnectTimeout(8000); c.setReadTimeout(30000); c.setRequestMethod("POST"); c.setDoOutput(true);
@@ -79,13 +82,22 @@ final class JevImage {
         return summarize(text);
     }
 
-    static String summarize(String json) throws Exception {
-        JSONObject a = new JSONObject(json).getJSONObject("answers");
-        JSONObject c = a.getJSONObject("raised_hand_count");
-        String choice = c.getString("choice");
-        double pr = c.getJSONObject("probabilities").optDouble(choice, Double.NaN);
-        double conf = c.optDouble("confidence", Double.NaN);
-        double any = a.getJSONObject("any_hand_raised").getDouble("noul");
-        return String.format(java.util.Locale.US, "Jev photo opinion (experimental, does not change the counts): raised hands %s (probability %.2f, confidence %.2f); any hand raised %.2f", choice, pr, conf, any);
+    private static int parseN(String choice) {
+        if (choice.equals("unclear")) return -1;
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("^n(\\d+)(_plus)?$").matcher(choice);
+        if (!m.matches()) throw new IllegalArgumentException("unexpected answer");
+        return Integer.parseInt(m.group(1));
     }
+
+    static Result summarize(String json) throws Exception {
+        JSONObject a = new JSONObject(json).getJSONObject("answers");
+        Result r = new Result();
+        JSONObject p = a.getJSONObject("people_count"), h = a.getJSONObject("raised_hand_count");
+        r.people = parseN(p.getString("choice")); r.hands = parseN(h.getString("choice"));
+        r.pPeople = p.getJSONObject("probabilities").optDouble(p.getString("choice"), Double.NaN);
+        r.pHands = h.getJSONObject("probabilities").optDouble(h.getString("choice"), Double.NaN);
+        return r;
+    }
+
+    static String show(int n) { return n < 0 ? "?" : (n > MAX_N ? ">" + MAX_N : String.valueOf(n)); }
 }

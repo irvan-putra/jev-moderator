@@ -43,13 +43,14 @@ public class MainActivity extends AppCompatActivity {
     private volatile boolean running = false, frozen = false, busy = false;
     private volatile List<Person> poses = new ArrayList<>();
     private volatile Bitmap lastFrame;
+    private volatile int cmpYoloPeople = -1, cmpYoloHands = -1;
     private final List<List<Person>> history = new ArrayList<>();   // last raw scans, for the 2-frame check
     private int people, hands, manualP, manualH, peak, roundPeople;
     private long roundUntil = 0;
     private final List<String> log = new ArrayList<>();
     private ProcessCameraProvider provider;
     private final List<JevClient.Round> rounds = new ArrayList<>();
-    private CheckBox cbJev; private EditText etKey; private TextView tvJev, tvPhoto; private KeyVault vault;
+    private CheckBox cbJev; private EditText etKey; private TextView tvJev, tvPhoto, tvCompare; private KeyVault vault;
 
     private int dp(int v) { return Math.round(v * getResources().getDisplayMetrics().density); }
     private TextView label(String t, int sp, boolean bold) {
@@ -93,6 +94,15 @@ public class MainActivity extends AppCompatActivity {
         }
         TextView sub = label("Counts people the camera sees, counts raised hands per question, and picks a random person. Camera pictures are processed on this phone only: no uploads, no recording, no names, no face recognition. The optional Jev round insight (off by default) sends question text and counts only. The separate photo question sends a picture only when you pick it, preview it and tap Send.", 12, false);
         root.addView(sub);
+
+        root.addView(label("Check a photo with Jev (experimental)", 15, true));
+        tvCompare = label("people  YOLO - / Jev -     hands  YOLO - / Jev -", 17, true); root.addView(tvCompare);
+        root.addView(label("YOLO = this phone's YOLOv8n-pose, run on the same photo. Jev = TypeSafe's Jev estimate from that photo. Jev answers a counting choice, which TypeSafe's image feature does not promise to get right, so treat it as a rough second opinion. Nothing is sent unless you pick a photo (or the current camera frame), see the preview and tap Send. Needs your TypeSafe key (Round insight section below).", 12, false));
+        LinearLayout phr = row();
+        phr.addView(btn("Pick a photo", 0xFF73A89A, v -> pickPhoto()));
+        phr.addView(btn("Use current camera frame", 0xFFFFFFFF, v -> frameToJev()));
+        root.addView(phr);
+        tvPhoto = label("No photo sent.", 13, false); root.addView(tvPhoto);
 
         LinearLayout m = row(); tvPeople = metric(m, "people counted"); tvHands = metric(m, "hands up now"); tvPeak = metric(m, "most hands at once (this round)");
         root.addView(m);
@@ -147,13 +157,6 @@ public class MainActivity extends AppCompatActivity {
         root.addView(jr);
         tvJev = label("Jev is off.", 13, false); root.addView(tvJev);
 
-        root.addView(label("Photo question to Jev (experimental, you choose each photo)", 15, true));
-        root.addView(label("Jev's image feature is marked experimental by TypeSafe. Nothing is sent unless you tap one of these buttons, check the photo in the preview and tap Send. Only that one photo goes to TypeSafe (api.typesafe.ai). It may show people's faces. It asks whether hands are raised and never identifies anyone. The answer is a second opinion and never changes the counts. Needs your key above.", 12, false));
-        LinearLayout phr = row();
-        phr.addView(btn("Pick a photo", 0xFFFFFFFF, v -> pickPhoto()));
-        phr.addView(btn("Use current camera frame", 0xFFFFFFFF, v -> frameToJev()));
-        root.addView(phr);
-        tvPhoto = label("No photo sent.", 13, false); root.addView(tvPhoto);
 
         root.addView(label("Random audience pick", 15, true));
         root.addView(label("Choose the pool each time. The picture freezes on the picked person (yellow box). It cannot know names.", 12, false));
@@ -202,7 +205,7 @@ public class MainActivity extends AppCompatActivity {
         tvModels.setText(
             "1. People and hands (on this phone, no internet): YOLOv8n-pose by Ultralytics (AGPL-3.0), ONNX export from Hugging Face Xenova/yolov8n-pose, file yolov8n-pose.onnx, " + size + ", 640x640 input, run by ONNX Runtime " + ort + " on the CPU. Status: " + (counter != null ? "loaded" : "not loaded yet (loads when you start the camera)") + ". It finds body boxes and 17 body points per person; a hand counts as raised when the wrist is above the nose or shoulders. It does not know who anyone is.\n"
           + "2. Round insight (online, optional): Jev (model jev-latest) by TypeSafe through api.typesafe.ai. Status: " + (jevOn ? "switched on" : "off") + (vault != null && vault.has() ? ", key saved" : ", no key saved") + ". Sends text and numbers only. Not yet tried against the live service by the author.\n"
-          + "3. Photo question (online, optional, experimental): the same Jev model through api.typesafe.ai with TypeSafe's experimental images flag. Sends one photo only after you pick it, preview it and tap Send. Not yet tried against the live service by the author.\n"
+          + "3. Photo question (online, optional, experimental): the same Jev model through api.typesafe.ai with TypeSafe's experimental images flag. Sends one photo only after you pick it, preview it and tap Send; Jev answers a people count and a raised-hand count (choices 0 to 30, or more) that are shown next to the on-phone YOLO count for the same photo. Not yet tried against the live service by the author.\n"
           + "Random pick is a plain random choice among the detected boxes, not a model.");
     }
 
@@ -246,15 +249,35 @@ public class MainActivity extends AppCompatActivity {
         if (f == null) { tvPhoto.setText("Start the camera first. Nothing was sent."); return; }
         confirmSend(f.copy(Bitmap.Config.ARGB_8888, false));
     }
+    private void showCompare(String jp, String jh) {
+        tvCompare.setText("people  YOLO " + (cmpYoloPeople < 0 ? "-" : cmpYoloPeople) + " / Jev " + jp + "     hands  YOLO " + (cmpYoloHands < 0 ? "-" : cmpYoloHands) + " / Jev " + jh);
+    }
+    /** Fit the bitmap to Jev's limits, run the local model on that same picture, then ask for confirmation. */
     private void confirmSend(final Bitmap src) {
         final int[] t = JevImage.targetSize(src.getWidth(), src.getHeight());
         if (t == null) { tvPhoto.setText("That photo's shape is outside Jev's image limits. Nothing was sent."); return; }
         final Bitmap out = (t[0] == src.getWidth() && t[1] == src.getHeight()) ? src : Bitmap.createScaledBitmap(src, t[0], t[1], true);
+        cmpYoloPeople = -1; cmpYoloHands = -1; showCompare("-", "-");
+        tvPhoto.setText("Counting on this phone first (nothing sent)...");
+        worker.execute(() -> {
+            String yolo;
+            try {
+                if (counter == null) { counter = new PoseCounter(this, "yolov8n-pose.onnx"); counterModel = "yolov8n-pose.onnx"; runOnUiThread(this::updateModels); }
+                List<Person> ps = counter.count(out, false);
+                int h = 0; for (Person p : ps) if (p.raised) h++;
+                cmpYoloPeople = ps.size(); cmpYoloHands = h;
+                yolo = "On this phone, YOLO counts " + ps.size() + " people and " + h + " raised hands in this photo (one pass, no two-frame check).";
+            } catch (Throwable e) { yolo = "The on-phone YOLO count failed for this photo (" + e.getClass().getSimpleName() + "), so there is nothing to compare."; }
+            final String y = yolo;
+            runOnUiThread(() -> { showCompare("-", "-"); showSendDialog(out, t, y); });
+        });
+    }
+    private void showSendDialog(final Bitmap out, int[] t, String yoloLine) {
         // Everything tall lives inside a ScrollView with a height-capped preview, so Send / Cancel stay on screen.
         int maxImg = Math.max(dp(160), (int) (getResources().getDisplayMetrics().heightPixels * 0.30f));
         LinearLayout body = new LinearLayout(this); body.setOrientation(LinearLayout.VERTICAL); body.setPadding(dp(20), dp(8), dp(20), dp(8));
-        TextView msg = label("Only this one photo is sent (" + t[0] + "x" + t[1] + "). It may show people's faces. Jev is asked whether hands are raised and is told not to identify anyone. Image support is experimental.", 14, false);
-        body.addView(msg);
+        body.addView(label(yoloLine, 14, true));
+        body.addView(label("Only this one photo is sent (" + t[0] + "x" + t[1] + "). It may show people's faces. Jev is asked how many people and raised hands it sees and is told not to identify anyone. Image support is experimental.", 14, false));
         ImageView iv = new ImageView(this); iv.setImageBitmap(out); iv.setScaleType(ImageView.ScaleType.FIT_CENTER); iv.setAdjustViewBounds(true);
         LinearLayout.LayoutParams ilp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, maxImg); ilp.topMargin = dp(8);
         body.addView(iv, ilp);
@@ -266,17 +289,21 @@ public class MainActivity extends AppCompatActivity {
             .setNegativeButton("Cancel", (d, w) -> tvPhoto.setText("Cancelled. Nothing was sent."))
             .setOnCancelListener(d -> tvPhoto.setText("Cancelled. Nothing was sent."))
             .show();
+        tvPhoto.setText("Waiting for you to tap Send or Cancel. Nothing sent yet.");
     }
     private void sendPhoto(final Bitmap out) {
         tvPhoto.setText("Sending the photo you confirmed to Jev...");
+        showCompare("...", "...");
         new Thread(() -> {
-            String res;
             try {
                 java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream();
                 out.compress(Bitmap.CompressFormat.JPEG, 88, bo);
-                res = JevImage.ask(vault.load(), bo.toByteArray());
-            } catch (Throwable e) { res = "Jev unavailable: " + e.getMessage(); }
-            final String r = res; runOnUiThread(() -> tvPhoto.setText(r));
+                final JevImage.Result r = JevImage.ask(vault.load(), bo.toByteArray());
+                runOnUiThread(() -> {
+                    showCompare(JevImage.show(r.people), JevImage.show(r.hands));
+                    tvPhoto.setText(String.format(java.util.Locale.US, "Jev estimate for this photo (experimental; \"?\" = Jev said unclear). Jev probability: people %.2f, hands %.2f. Counts above are not changed.", r.pPeople, r.pHands));
+                });
+            } catch (Throwable e) { runOnUiThread(() -> { showCompare("-", "-"); tvPhoto.setText("Jev unavailable: " + e.getMessage()); }); }
         }).start();
     }
 

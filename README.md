@@ -31,3 +31,5 @@ v0.4 crashed whenever Start camera was tapped: the "Models used" panel was missi
 Icon: the launcher icon is a sticker image supplied by the app owner; its original source and license are not known to the author.
 
 Photo question (v0.5.0, optional, experimental): TypeSafe marks Jev's image input as experimental (header TypeSafe-Danger-Zone-Images, docs.typesafe.ai/go/images). The app sends one photo only after you pick it (or choose the current camera frame), see it in a preview and tap Send. It asks whether hands are raised and never to identify anyone, and shows the answer as a second opinion that never changes the counts. It needs your own TypeSafe key and credits. Tested only against a local mock server, not the live service and not on a phone.
+
+v0.5.2: the photo check is at the top of the screen. For the photo you confirm, it shows on-phone YOLO counts next to Jev's estimate (people and raised-hand counts, answered as choices 0 to 30 or more). Both numbers refer to the same single picture. YOLO runs one pass with no two-frame check there, so it can differ from the live camera numbers. Jev's counts are experimental and untested on the live service.
