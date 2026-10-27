@@ -50,7 +50,7 @@ public class MainActivity extends AppCompatActivity {
     private final List<String> log = new ArrayList<>();
     private ProcessCameraProvider provider;
     private final List<JevClient.Round> rounds = new ArrayList<>();
-    private CheckBox cbJev; private EditText etKey; private TextView tvJev, tvPhoto, tvCompare; private KeyVault vault;
+    private CheckBox cbSendJev; private CheckBox cbJev; private EditText etKey; private TextView tvJev, tvPhoto, tvCompare; private KeyVault vault;
 
     private int dp(int v) { return Math.round(v * getResources().getDisplayMetrics().density); }
     private TextView label(String t, int sp, boolean bold) {
@@ -92,17 +92,19 @@ public class MainActivity extends AppCompatActivity {
             ct.setBackgroundColor(0xFFFBE9E9); ct.setPadding(dp(8), dp(8), dp(8), dp(8)); root.addView(ct);
             root.addView(btn("Hide this message", 0xFFFFFFFF, v -> { cp.edit().remove("last").apply(); ct.setVisibility(View.GONE); v.setVisibility(View.GONE); }));
         }
-        TextView sub = label("Counts people and raised hands, picks a random person. Camera frames stay on this phone: no recording, no names, no face recognition. Jev (optional) gets a photo only after you preview and tap Send.", 12, false);
+        TextView sub = label("Counts people and raised hands, picks a random person. Camera frames stay on this phone: no recording, no names, no face recognition. Jev (optional) gets a photo only when you turn on Send photos to Jev and tap a Check button.", 12, false);
         root.addView(sub);
 
         LinearLayout m = row(); tvPeople = metric(m, "people\nYOLO / Jev"); tvHands = metric(m, "hands up now\nYOLO / Jev"); tvPeak = metric(m, "most hands at once\nYOLO / Jev");
         root.addView(m);
         tvCompare = label("Jev: no photo sent yet. YOLO is live from the camera.", 12, false); root.addView(tvCompare);
         LinearLayout phr = row();
-        phr.addView(btn("Photo to Jev", 0xFF73A89A, v -> pickPhoto()));
-        phr.addView(btn("Camera frame to Jev", 0xFFFFFFFF, v -> frameToJev()));
+        phr.addView(btn("Check a photo", 0xFF73A89A, v -> pickPhoto()));
+        phr.addView(btn("Check camera frame", 0xFFFFFFFF, v -> frameToJev()));
         root.addView(phr);
-        tvPhoto = label("Jev checks one photo only after you preview it and tap Send. Experimental.", 12, false); root.addView(tvPhoto);
+        cbSendJev = new CheckBox(this); cbSendJev.setText("Send photos to Jev (experimental)"); cbSendJev.setChecked(false); root.addView(cbSendJev);
+        root.addView(label("OFF (default): the photo is counted on this phone only, nothing is sent. ON: each time you tap a Check button, that one picture is sent to Jev right away, with no confirmation (it may show faces). Never automatic, and it goes back to OFF when the app restarts. Needs your TypeSafe key.", 11, false));
+        tvPhoto = label("Pick a photo or use the camera frame.", 12, false); root.addView(tvPhoto);
         tvSrc = label("source: camera", 12, false); root.addView(tvSrc);
 
         FrameLayout stage = new FrameLayout(this); stage.setBackgroundColor(Color.BLACK);
@@ -208,10 +210,9 @@ public class MainActivity extends AppCompatActivity {
 
     // ---- optional photo question to Jev: only after the user picks a photo, sees it, and taps Send ----
     private void pickPhoto() {
-        if (!vault.has()) { tvPhoto.setText("Save a TypeSafe key first. Nothing was sent."); return; }
         android.content.Intent i = new android.content.Intent(android.content.Intent.ACTION_GET_CONTENT);
         i.setType("image/*"); i.addCategory(android.content.Intent.CATEGORY_OPENABLE);
-        startActivityForResult(android.content.Intent.createChooser(i, "Pick a photo for Jev"), REQ_PICK);
+        startActivityForResult(android.content.Intent.createChooser(i, "Pick a photo to check"), REQ_PICK);
     }
     @Override protected void onActivityResult(int req, int res, android.content.Intent data) {
         super.onActivityResult(req, res, data);
@@ -241,7 +242,6 @@ public class MainActivity extends AppCompatActivity {
         return b;
     }
     private void frameToJev() {
-        if (!vault.has()) { tvPhoto.setText("Save a TypeSafe key first. Nothing was sent."); return; }
         Bitmap f = lastFrame;
         if (f == null) { tvPhoto.setText("Start the camera first. Nothing was sent."); return; }
         confirmSend(f.copy(Bitmap.Config.ARGB_8888, false));
@@ -263,7 +263,14 @@ public class MainActivity extends AppCompatActivity {
                 yolo = "On this phone, YOLO counts " + ps.size() + " people and " + h + " raised hands in this photo (one pass, no two-frame check).";
             } catch (Throwable e) { yolo = "The on-phone YOLO count failed for this photo (" + e.getClass().getSimpleName() + "), so there is nothing to compare."; }
             final String y = yolo;
-            runOnUiThread(() -> showSendDialog(out, t, y));
+            runOnUiThread(() -> {
+                if (!cbSendJev.isChecked()) {
+                    jevNote = "Photo checked on this phone only (Send photos to Jev is OFF, nothing sent). YOLO: " + (cmpYoloPeople < 0 ? "-" : cmpYoloPeople) + " people, " + (cmpYoloHands < 0 ? "-" : cmpYoloHands) + " hands.";
+                    render(); tvPhoto.setText(y + " Turn on Send photos to Jev to also ask Jev."); return;
+                }
+                if (!vault.has()) { tvPhoto.setText("Save a TypeSafe key first. Nothing was sent."); return; }
+                sendPhoto(out);
+            });
         });
     }
     private void showSendDialog(final Bitmap out, int[] t, String yoloLine) {
@@ -286,7 +293,7 @@ public class MainActivity extends AppCompatActivity {
         tvPhoto.setText("Waiting for you to tap Send or Cancel. Nothing sent yet.");
     }
     private void sendPhoto(final Bitmap out) {
-        tvPhoto.setText("Sending the photo you confirmed to Jev...");
+        tvPhoto.setText("Sending this one photo to Jev (toggle is ON)...");
         jevNote = "Waiting for Jev (photo sent)..."; showCompare("...", "...");
         new Thread(() -> {
             try {
