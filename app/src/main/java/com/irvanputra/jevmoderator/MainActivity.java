@@ -35,14 +35,15 @@ public class MainActivity extends AppCompatActivity {
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
 
     private PreviewView preview; private ImageView frozenView; private OverlayView overlay;
-    private TextView tvPeople, tvHands, tvPeak, tvStatus, tvPick, tvLog, tvSrc;
-    private CheckBox cbWide, cbManual; private Spinner spModel, spDur; private EditText etQ;
+    private TextView tvModels, tvPeople, tvHands, tvPeak, tvStatus, tvPick, tvLog, tvSrc;
+    private CheckBox cbWide, cbManual; private Spinner spDur; private EditText etQ;
     private Button btnCam, btnRound;
 
     private volatile PoseCounter counter; private volatile String counterModel = "";
     private volatile boolean running = false, frozen = false, busy = false;
     private volatile List<Person> poses = new ArrayList<>();
     private volatile Bitmap lastFrame;
+    private final List<List<Person>> history = new ArrayList<>();   // last raw scans, for the 2-frame check
     private int people, hands, manualP, manualH, peak, roundPeople;
     private long roundUntil = 0;
     private final List<String> log = new ArrayList<>();
@@ -78,7 +79,7 @@ public class MainActivity extends AppCompatActivity {
         LinearLayout root = new LinearLayout(this); root.setOrientation(LinearLayout.VERTICAL); root.setPadding(dp(14), dp(14), dp(14), dp(24));
         sv.addView(root);
         root.addView(label("Audience Moderator", 22, true));
-        TextView sub = label("Counts people the camera sees, counts raised hands per question, and picks a random person. Runs on this phone: no uploads, no recording, no names, no face recognition.", 12, false);
+        TextView sub = label("Counts people the camera sees, counts raised hands per question, and picks a random person. Camera pictures are processed on this phone only: no uploads, no recording, no names, no face recognition. The optional Jev round insight (off by default) would send question text and counts, never pictures.", 12, false);
         root.addView(sub);
 
         LinearLayout m = row(); tvPeople = metric(m, "people counted"); tvHands = metric(m, "hands up now"); tvPeak = metric(m, "most hands at once (this round)");
@@ -95,9 +96,8 @@ public class MainActivity extends AppCompatActivity {
 
         LinearLayout r1 = row();
         btnCam = btn("Start camera", 0xFF73A89A, v -> toggleCamera()); r1.addView(btnCam);
-        spModel = new Spinner(this); spModel.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, new String[]{"Fast model (Lite)", "Accurate model (Full)"}));
         root.addView(r1);
-        cbWide = new CheckBox(this); cbWide.setText("Wide-room scan (tiles; sees farther people, about 1-3 s per update)"); cbWide.setChecked(true); root.addView(cbWide);
+        cbWide = new CheckBox(this); cbWide.setText("Wide-room scan (7 passes per update; slow, about 4 s on a Galaxy A24; helps a little with farther people)"); cbWide.setChecked(false); root.addView(cbWide);
         tvStatus = label("Camera is off.", 13, false); root.addView(tvStatus);
         TextView note = label("Limits: it only counts people the camera can see. Hidden, tiny, far or dark people are missed and a packed room will undercount. A raised hand is a wrist clearly above the nose; a half-raised hand may not count. Use manual +/- to correct by eye.", 12, false);
         note.setBackgroundColor(0xFFFAF6E8); note.setPadding(dp(8), dp(8), dp(8), dp(8)); root.addView(note);
@@ -121,7 +121,7 @@ public class MainActivity extends AppCompatActivity {
         root.addView(label("Round insight (optional, uses Jev online)", 15, true));
         root.addView(label("Off by default. When switched on, after each round ONLY the question text and the hand/people counts are sent to TypeSafe's Jev model (api.typesafe.ai). Camera pictures never leave the phone. You need your own TypeSafe API key. Everything else works without it.", 12, false));
         vault = new KeyVault(this);
-        cbJev = new CheckBox(this); cbJev.setText("Send round numbers to Jev for an insight"); root.addView(cbJev);
+        cbJev = new CheckBox(this); cbJev.setText("Send round numbers to Jev for an insight"); root.addView(cbJev); cbJev.setOnCheckedChangeListener((c, on) -> updateModels());
         etKey = new EditText(this); etKey.setHint(vault.has() ? "API key saved (hidden). Paste a new one to replace." : "Paste your TypeSafe API key");
         etKey.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD); etKey.setSingleLine(); root.addView(etKey);
         LinearLayout jr = row();
@@ -155,6 +155,19 @@ public class MainActivity extends AppCompatActivity {
     }
     private void status(String s) { runOnUiThread(() -> tvStatus.setText(s)); }
 
+
+    /** Describes what is actually inside this build and its live state. */
+    private void updateModels() {
+        String size = "?";
+        try (android.content.res.AssetFileDescriptor fd = getAssets().openFd("yolov8n-pose.onnx")) { size = String.format(java.util.Locale.US, "%.1f MB", fd.getLength() / 1048576.0); } catch (Exception ignored) { }
+        String ort = "?"; try { ort = ai.onnxruntime.OrtEnvironment.getEnvironment().getVersion(); } catch (Throwable ignored) { }
+        boolean jevOn = cbJev != null && cbJev.isChecked();
+        tvModels.setText(
+            "1. People and hands (on this phone, no internet): YOLOv8n-pose by Ultralytics (AGPL-3.0), ONNX export from Hugging Face Xenova/yolov8n-pose, file yolov8n-pose.onnx, " + size + ", 640x640 input, run by ONNX Runtime " + ort + " on the CPU. Status: " + (counter != null ? "loaded" : "not loaded yet (loads when you start the camera)") + ". It finds body boxes and 17 body points per person; a hand counts as raised when the wrist is above the nose or shoulders. It does not know who anyone is.\n"
+          + "2. Round insight (online, optional): Jev (model jev-latest) by TypeSafe through api.typesafe.ai. Status: " + (jevOn ? "switched on" : "off") + (vault != null && vault.has() ? ", key saved" : ", no key saved") + ". Sends text and numbers only. Not yet tried against the live service by the author.\n"
+          + "Random pick is a plain random choice among the detected boxes, not a model.");
+    }
+
     // ---- camera ----
     private void toggleCamera() {
         if (running) { stopCamera(); return; }
@@ -174,7 +187,7 @@ public class MainActivity extends AppCompatActivity {
             try {
                 if (counter == null || !counterModel.equals(model)) { if (counter != null) counter.close(); counter = new PoseCounter(this, model); counterModel = model; }
             } catch (Throwable t) { status("Model failed: " + t.getMessage() + ". Manual mode still works."); runOnUiThread(() -> btnCam.setEnabled(true)); return; }
-            runOnUiThread(this::bindCamera);
+            runOnUiThread(() -> { updateModels(); bindCamera(); });
         });
     }
     private void bindCamera() {
@@ -194,7 +207,7 @@ public class MainActivity extends AppCompatActivity {
         }, ContextCompat.getMainExecutor(this));
     }
     private void stopCamera() {
-        running = false; if (provider != null) provider.unbindAll();
+        running = false; history.clear(); if (provider != null) provider.unbindAll();
         btnCam.setText("Start camera"); status("Camera off."); overlay.set(new ArrayList<>(), 1, 1, -1);
     }
 
@@ -206,7 +219,9 @@ public class MainActivity extends AppCompatActivity {
             int rot = ip.getImageInfo().getRotationDegrees();
             if (rot != 0) { Matrix mx = new Matrix(); mx.postRotate(rot); bmp = Bitmap.createBitmap(bmp, 0, 0, bmp.getWidth(), bmp.getHeight(), mx, true); }
             long t0 = System.currentTimeMillis();
-            List<Person> list = counter.count(bmp, cbWide.isChecked());
+            List<Person> raw = counter.count(bmp, cbWide.isChecked());
+            List<Person> list = PoseMath.confirm(raw, history);
+            history.add(0, raw); while (history.size() > 2) history.remove(history.size() - 1);
             long ms = System.currentTimeMillis() - t0;
             if (frozen) return;
             lastFrame = bmp; poses = list;
@@ -239,7 +254,7 @@ public class MainActivity extends AppCompatActivity {
     private void saveKey() {
         String k = etKey.getText().toString().trim();
         if (k.isEmpty()) { tvJev.setText("Paste a key first."); return; }
-        try { vault.save(k); etKey.setText(""); etKey.setHint("API key saved (hidden). Paste a new one to replace."); tvJev.setText("Key saved on this phone (encrypted). Tick the box to use it."); }
+        try { vault.save(k); etKey.setText(""); etKey.setHint("API key saved (hidden). Paste a new one to replace."); tvJev.setText("Key saved on this phone (encrypted). Tick the box to use it."); updateModels(); }
         catch (Throwable t) { tvJev.setText("Could not store the key safely: " + t.getMessage()); }
     }
     private void insight(String q, int h, int p, boolean manual, boolean isTest) {

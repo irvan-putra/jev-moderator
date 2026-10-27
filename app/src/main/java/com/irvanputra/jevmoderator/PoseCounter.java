@@ -59,7 +59,7 @@ final class PoseCounter {
     /** wide=false: whole frame. wide=true: whole frame plus 6 overlapping tiles (sees smaller people, slower). */
     List<Person> count(Bitmap frame, boolean wide) throws Exception {
         List<Person> all = new ArrayList<>();
-        for (PoseMath.Det d : infer(frame)) all.add(PoseMath.toPerson(d, 0, 0, 1, 1));
+        for (PoseMath.Det d : infer(frame)) if (PoseMath.accept(d, true)) all.add(PoseMath.toPerson(d, 0, 0, 1, 1));
         if (wide) {
             int W = frame.getWidth(), H = frame.getHeight();
             float[] xs = {0f, 0.25f, 0.5f}, ys = {0f, 0.4f};
@@ -67,7 +67,7 @@ final class PoseCounter {
                 int cx = Math.round(x * W), cy = Math.round(y * H), cw = Math.round(0.5f * W), ch = Math.round(0.6f * H);
                 Bitmap crop = Bitmap.createBitmap(frame, cx, cy, Math.min(cw, W - cx), Math.min(ch, H - cy));
                 List<Person> add = new ArrayList<>();
-                for (PoseMath.Det d : infer(crop)) add.add(PoseMath.toPerson(d, x, y, 0.5f, 0.6f));
+                for (PoseMath.Det d : infer(crop)) if (PoseMath.accept(d, false)) add.add(PoseMath.toPerson(d, x, y, 0.5f, 0.6f));
                 PoseMath.merge(all, add);
             }
         }

@@ -5,4 +5,5 @@ final class Person {
     float x0, y0, x1, y1;   // box, normalized 0..1 in the full frame
     float nx, ny;           // nose position, normalized
     boolean raised;
+    float conf;             // model score 0..1 (for display)
 }

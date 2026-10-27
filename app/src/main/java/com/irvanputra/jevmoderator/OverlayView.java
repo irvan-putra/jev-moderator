@@ -40,7 +40,7 @@ final class OverlayView extends View {
             box.setStrokeWidth(hl ? 10f : 3f);
             RectF r = new RectF(ox + p.x0 * dw, oy + p.y0 * dh, ox + p.x1 * dw, oy + p.y1 * dh);
             c.drawRect(r, box);
-            c.drawText("#" + (i + 1) + (p.raised ? " hand" : ""), r.left + 4, Math.max(36f, r.top - 6), text);
+            c.drawText("#" + (i + 1) + " " + Math.round(p.conf * 100) + "%" + (p.raised ? " hand" : ""), r.left + 4, Math.max(36f, r.top - 6), text);
         }
     }
 }

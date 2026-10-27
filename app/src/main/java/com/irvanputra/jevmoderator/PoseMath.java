@@ -7,6 +7,8 @@ import java.util.List;
 /** Pure-Java post-processing (no Android classes) so it can be unit-tested on a normal JVM. */
 final class PoseMath {
     static final float CONF = 0.30f, KP = 0.40f, NMS_IOU = 0.5f;
+    static final float ACCEPT_FULL = 0.40f, ACCEPT_TILE = 0.50f, EV = 0.5f;
+    static final int MIN_KP = 5;
     static final int S = 640;
     static final class Det { float cx, cy, w, h, conf; float[] kp = new float[51]; }
 
@@ -55,7 +57,7 @@ final class PoseMath {
             if (noseOk) { if (wy < k[1] - margin) r = true; }
             else if (k[5 * 3 + 2] >= KP && k[6 * 3 + 2] >= KP) { if (wy < Math.min(k[5 * 3 + 1], k[6 * 3 + 1]) - margin) r = true; }
         }
-        p.raised = r;
+        p.raised = r; p.conf = d.conf;
         return p;
     }
 
@@ -71,5 +73,38 @@ final class PoseMath {
         float iw = Math.max(0, Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0)), ih = Math.max(0, Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0));
         float i = iw * ih, ua = (a.x1 - a.x0) * (a.y1 - a.y0) + (b.x1 - b.x0) * (b.y1 - b.y0) - i;
         return ua <= 0 ? 0 : i / ua;
+    }
+
+    static int visKp(Det d) { int n = 0; for (int k = 0; k < 17; k++) if (d.kp[k * 3 + 2] >= EV) n++; return n; }
+
+    /**
+     * Evidence gate, applied after NMS. A furniture "person" usually has a weak score, a few or scattered keypoints, or a box
+     * as big as the whole tile. Needs a clear score, enough body points, a shoulder, and a head or hip point.
+     * Tiles use a stricter score because cropped, enlarged views produce more false boxes.
+     */
+    static boolean accept(Det d, boolean full) {
+        if (d.conf < (full ? ACCEPT_FULL : ACCEPT_TILE)) return false;
+        if (visKp(d) < MIN_KP) return false;
+        float[] k = d.kp;
+        boolean shoulder = k[5 * 3 + 2] >= EV || k[6 * 3 + 2] >= EV;
+        boolean head = false; for (int i = 0; i < 5; i++) if (k[i * 3 + 2] >= EV) head = true;
+        boolean hip = k[11 * 3 + 2] >= EV || k[12 * 3 + 2] >= EV;
+        if (!(shoulder && (head || hip))) return false;
+        if (!full && d.w > 0.9f && d.h > 0.9f) return false;   // a box as big as the whole tile is not one person
+        return d.w * d.h >= 0.002f;
+    }
+
+    /**
+     * Temporal check: a person counts only if a matching box was also seen in at least one of the previous frames.
+     * One-frame false boxes (furniture, shadows) are dropped. Position only; no identity is kept.
+     */
+    static List<Person> confirm(List<Person> cur, List<List<Person>> prev) {
+        List<Person> out = new ArrayList<>();
+        for (Person c : cur) {
+            boolean seen = false;
+            for (List<Person> frame : prev) { for (Person o : frame) if (boxIou(o, c) > 0.3f) { seen = true; break; } if (seen) break; }
+            if (seen) out.add(c);
+        }
+        return out;
     }
 }
