@@ -24,3 +24,6 @@ Round insight uses the official TypeSafe API (docs.typesafe.ai): POST /v1/system
 
 ## v0.4 changes (false-positive repair)
 An empty furnished room was counted as 5 people on a Galaxy A24 (v0.3). v0.4 adds an evidence check (clear score, at least 5 body points, a shoulder plus a head or hip point, no tile-sized boxes), a two-frame confirmation before a person is counted, and shows each box's score. The wide-room scan is now off by default (about 4 s per update on the A24). Counts are still estimates: use the manual +/- buttons to correct them. The app screen now lists the models used.
+
+## v0.4.1 (crash fix)
+v0.4 crashed whenever Start camera was tapped: the "Models used" panel was missing from the screen code while the camera start still tried to update it (a null field). v0.4.1 adds the panel for real, guards the update, and keeps a local-only crash note (class names and code lines, no messages) that is shown on the next launch. Not yet tested on a phone.

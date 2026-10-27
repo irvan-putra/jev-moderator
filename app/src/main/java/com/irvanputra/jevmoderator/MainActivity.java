@@ -78,7 +78,19 @@ public class MainActivity extends AppCompatActivity {
         ScrollView sv = new ScrollView(this); sv.setBackgroundColor(0xFFF4EFEC);
         LinearLayout root = new LinearLayout(this); root.setOrientation(LinearLayout.VERTICAL); root.setPadding(dp(14), dp(14), dp(14), dp(24));
         sv.addView(root);
+        final android.content.SharedPreferences cp = getSharedPreferences("crash", MODE_PRIVATE);
+        final Thread.UncaughtExceptionHandler prevH = Thread.getDefaultUncaughtExceptionHandler();
+        Thread.setDefaultUncaughtExceptionHandler((th, ex) -> {
+            try { cp.edit().putString("last", safeTrace(ex)).commit(); } catch (Throwable ignored) { }   // never blocks the normal crash path
+            if (prevH != null) prevH.uncaughtException(th, ex);
+        });
         root.addView(label("Audience Moderator", 22, true));
+        String lastCrash = cp.getString("last", null);
+        if (lastCrash != null) {
+            TextView ct = label("The app closed unexpectedly last time. Details (stay on this phone; screenshot them if you want help):\n" + lastCrash.substring(0, Math.min(900, lastCrash.length())), 11, false);
+            ct.setBackgroundColor(0xFFFBE9E9); ct.setPadding(dp(8), dp(8), dp(8), dp(8)); root.addView(ct);
+            root.addView(btn("Hide this message", 0xFFFFFFFF, v -> { cp.edit().remove("last").apply(); ct.setVisibility(View.GONE); v.setVisibility(View.GONE); }));
+        }
         TextView sub = label("Counts people the camera sees, counts raised hands per question, and picks a random person. Camera pictures are processed on this phone only: no uploads, no recording, no names, no face recognition. The optional Jev round insight (off by default) would send question text and counts, never pictures.", 12, false);
         root.addView(sub);
 
@@ -101,6 +113,10 @@ public class MainActivity extends AppCompatActivity {
         tvStatus = label("Camera is off.", 13, false); root.addView(tvStatus);
         TextView note = label("Limits: it only counts people the camera can see. Hidden, tiny, far or dark people are missed and a packed room will undercount. A raised hand is a wrist clearly above the nose; a half-raised hand may not count. Use manual +/- to correct by eye.", 12, false);
         note.setBackgroundColor(0xFFFAF6E8); note.setPadding(dp(8), dp(8), dp(8), dp(8)); root.addView(note);
+        root.addView(label("Models used", 15, true));
+        tvModels = label("", 12, false); tvModels.setBackgroundColor(0xFFF0F3F1); tvModels.setPadding(dp(8), dp(8), dp(8), dp(8)); root.addView(tvModels);
+        updateModels();
+
 
         root.addView(label("Manual correction", 15, true));
         LinearLayout mr = row();
@@ -156,8 +172,21 @@ public class MainActivity extends AppCompatActivity {
     private void status(String s) { runOnUiThread(() -> tvStatus.setText(s)); }
 
 
+
+    /** Crash note kept on the phone only: class names and code locations. No exception messages (they can hold typed text or keys). */
+    static String safeTrace(Throwable ex) {
+        StringBuilder sb = new StringBuilder(); int depth = 0;
+        for (Throwable t = ex; t != null && depth < 3; t = t.getCause(), depth++) {
+            sb.append(depth == 0 ? "" : "caused by ").append(t.getClass().getName()).append('\n');
+            StackTraceElement[] st = t.getStackTrace();
+            for (int i = 0; i < Math.min(10, st.length); i++) sb.append("  at ").append(st[i].getClassName()).append('.').append(st[i].getMethodName()).append(':').append(st[i].getLineNumber()).append('\n');
+        }
+        return sb.toString();
+    }
+
     /** Describes what is actually inside this build and its live state. */
     private void updateModels() {
+        if (tvModels == null) return;
         String size = "?";
         try (android.content.res.AssetFileDescriptor fd = getAssets().openFd("yolov8n-pose.onnx")) { size = String.format(java.util.Locale.US, "%.1f MB", fd.getLength() / 1048576.0); } catch (Exception ignored) { }
         String ort = "?"; try { ort = ai.onnxruntime.OrtEnvironment.getEnvironment().getVersion(); } catch (Throwable ignored) { }
