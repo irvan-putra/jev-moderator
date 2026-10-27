@@ -27,3 +27,5 @@ An empty furnished room was counted as 5 people on a Galaxy A24 (v0.3). v0.4 add
 
 ## v0.4.1 (crash fix)
 v0.4 crashed whenever Start camera was tapped: the "Models used" panel was missing from the screen code while the camera start still tried to update it (a null field). v0.4.1 adds the panel for real, guards the update, and keeps a local-only crash note (class names and code lines, no messages) that is shown on the next launch. Not yet tested on a phone.
+
+Icon: the launcher icon is a sticker image supplied by the app owner; its original source and license are not known to the author.
