@@ -250,11 +250,18 @@ public class MainActivity extends AppCompatActivity {
         final int[] t = JevImage.targetSize(src.getWidth(), src.getHeight());
         if (t == null) { tvPhoto.setText("That photo's shape is outside Jev's image limits. Nothing was sent."); return; }
         final Bitmap out = (t[0] == src.getWidth() && t[1] == src.getHeight()) ? src : Bitmap.createScaledBitmap(src, t[0], t[1], true);
-        ImageView iv = new ImageView(this); iv.setImageBitmap(out); iv.setAdjustViewBounds(true); iv.setPadding(dp(8), dp(8), dp(8), dp(8));
+        // Everything tall lives inside a ScrollView with a height-capped preview, so Send / Cancel stay on screen.
+        int maxImg = Math.max(dp(160), (int) (getResources().getDisplayMetrics().heightPixels * 0.30f));
+        LinearLayout body = new LinearLayout(this); body.setOrientation(LinearLayout.VERTICAL); body.setPadding(dp(20), dp(8), dp(20), dp(8));
+        TextView msg = label("Only this one photo is sent (" + t[0] + "x" + t[1] + "). It may show people's faces. Jev is asked whether hands are raised and is told not to identify anyone. Image support is experimental.", 14, false);
+        body.addView(msg);
+        ImageView iv = new ImageView(this); iv.setImageBitmap(out); iv.setScaleType(ImageView.ScaleType.FIT_CENTER); iv.setAdjustViewBounds(true);
+        LinearLayout.LayoutParams ilp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, maxImg); ilp.topMargin = dp(8);
+        body.addView(iv, ilp);
+        ScrollView sv = new ScrollView(this); sv.addView(body);
         new androidx.appcompat.app.AlertDialog.Builder(this)
-            .setTitle("Send this photo to TypeSafe's Jev?")
-            .setMessage("Only this one photo is sent (" + t[0] + "x" + t[1] + "). It may show people's faces. Jev is asked whether hands are raised and is told not to identify anyone. Image support is experimental.")
-            .setView(iv)
+            .setTitle("Send this photo to Jev?")
+            .setView(sv)
             .setPositiveButton("Send", (d, w) -> sendPhoto(out))
             .setNegativeButton("Cancel", (d, w) -> tvPhoto.setText("Cancelled. Nothing was sent."))
             .setOnCancelListener(d -> tvPhoto.setText("Cancelled. Nothing was sent."))
